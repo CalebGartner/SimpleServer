@@ -1,37 +1,19 @@
-## Welcome to GitHub Pages
+#Introduction
+    This is a small project to create a HTTP 1.1-compliant webserver written in Python, partially for university, partially for myself.
+    
+#References
+    The RFC for HTTP/1.1 is here: https://www.ietf.org/rfc/rfc2616.txt
+    The inspiration for this project comes from: https://www.cs.cmu.edu/~prs/15-441-F16/project1/project1.pdf
+    
+#Architecture and Design
+    The specifications for this are described by the RFC. This will be updated as I implement the webserver and look at how others have designed their servers.
+    Specifically: 
+    * Multi-threaded TCP communications to handle concurrent clients
+    * User-specified host and other configuration options
+    * Implementation of HEAD, POST, and GET HTTP 1.1 methods
 
-You can use the [editor on GitHub](https://github.com/CalebGartner/SimpleServer/edit/master/README.md) to maintain and preview the content for your website in Markdown files.
+#Deployment and Testing
+    The server should be runnable on as a stand-alone executable or in a VM/separate machine to test its functions/capabilities.
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
-
-### Markdown
-
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
-
-```markdown
-Syntax highlighted code block
-
-# Header 1
-## Header 2
-### Header 3
-
-- Bulleted
-- List
-
-1. Numbered
-2. List
-
-**Bold** and _Italic_ and `Code` text
-
-[Link](url) and ![Image](src)
-```
-
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
-
-### Jekyll Themes
-
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/CalebGartner/SimpleServer/settings). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
-
-### Support or Contact
-
-Having trouble with Pages? Check out our [documentation](https://help.github.com/categories/github-pages-basics/) or [contact support](https://github.com/contact) and we’ll help you sort it out.
+#Future Additions
+    Besides the base HTTP 1.1 standard implementation, I may also attempt to implement CGI (Common Gateway Interface).
