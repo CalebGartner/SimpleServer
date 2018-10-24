@@ -1,11 +1,11 @@
-import os
+import socket
 import sys
 import json
 import struct
 import hashlib
+from typing import Dict, Union  # TODO change to serverlib ? httplib ? - move headers from init?
 
-from typing import Dict, Union
-from types import SimpleNamespace
+from src import Status
 
 # References:
 #     - https://realpython.com/python-sockets
@@ -19,61 +19,91 @@ BYTEORDER = sys.byteorder
 PROTO_HEADER_LENGTH = 2  # bytes
 
 
-# TODO headers, etc.
+class RequestProcessor:  # TODO take in param to signal to process/thread that it's done . . . ?
 
+    __slots__ = ['buffer', 'content', 'header_len', 'header', 'md5sum',
+                 'finished', 'client_address', 'connection', 'timeout']
 
-class PacketData(SimpleNamespace):
+    def __init__(self, _client_address: Union[int, str], _client: socket, _timeout: int):  # TODO extract 'Packet' into data-class?
+        self.client_address = _client_address
+        self.connection = _client
+        self.timeout = _timeout
 
-    def __init__(self):
-        super(PacketData, self).__init__()
         self.buffer: bytearray = bytearray()
         self.content: bytearray = None
+
         self.header_len: int = None
         self.header: Dict = None
-        self.checksum: str = None  # updated per-packet
 
-    def reset(self):
+        self.md5sum: str = None  # updated per-packet
+
+        self.finished = False
+
+        self.service_request()
+
+    def service_request(self):
+        with self.connection:
+            print("Connected by: ", self.client_address)
+            while not self.finished:
+                try:
+                    data = self.connection.recv(BUFFER_SIZE)
+                except BlockingIOError:
+                    pass
+                else:
+                    if data:
+                        self.buffer += data
+                        self.process_packet()
+
+                        if self.content is not None:
+                            pass  # TODO stuff
+                        # TODO check for shutdown-request from client, etc
+                        try:  # explicitly shutdown.  socket.close() merely releases the socket and waits for GC to perform the actual close.
+                            self.connection.shutdown(socket.SHUT_WR)
+                        except OSError:
+                            pass  # some platforms may raise ENOTCONN here
+                        self.connection.close()
+                        break
+                    else:
+                        raise RuntimeError('No packet sent from client')
+
+    def clear_packet(self):
         self.content = None
         self.header = None
         self.header_len = None
-        self.checksum = None
+        self.md5sum = None
 
+    def process_proto_header(self):
+        if len(self.buffer) >= PROTO_HEADER_LENGTH:
+            self.header_len = struct.unpack(">H", self.buffer[:PROTO_HEADER_LENGTH])[0]
+            self.buffer = self.buffer[PROTO_HEADER_LENGTH:]
 
-def process_proto_header(packet: PacketData):
-    if len(packet.buffer) >= PROTO_HEADER_LENGTH:
-        packet.header_len = struct.unpack(">H", packet.buffer[:PROTO_HEADER_LENGTH])[0]
-        packet.buffer = packet.buffer[PROTO_HEADER_LENGTH:]
+    def process_header(self):
+        if len(self.buffer) >= self.header_len:
+            self.header = decode(self.buffer[:self.header_len])
+            if any(hdr not in self.header for hdr in HEADERS):
+                raise ValueError("invalid self: missing required header")
+            if self.header['action'] not in ACTIONS:
+                raise ValueError(f"invalid self: invalid action specification '{self.header[HEADERS.ACTION]}'")
+            self.buffer = self.buffer[self.header_len:]
 
+    def process_content(self):
+        content_len = self.header[HEADERS.CONTENT_LEN]
+        if len(self.buffer) < content_len:
+            return
+        self.content = self.buffer[:content_len]
+        self.buffer = self.buffer[content_len:]
 
-def process_header(packet: PacketData):
-    if len(packet.buffer) >= packet.header_len:
-        packet.header = decode(packet.buffer[:packet.header_len])
-        if any(hdr not in packet.header for hdr in HEADERS):
-            raise ValueError("invalid packet: missing required header")
-        if packet.header['action'] not in ACTIONS:
-            raise ValueError(f"invalid packet: invalid action specification '{packet.header[HEADERS.ACTION]}'")
-        packet.buffer = packet.buffer[packet.header_len:]
+    def process_packet(self):
+        if self.header_len is None:  # process proto-header
+            self.process_proto_header()
 
+        if self.header_len is not None:  # process packet header
+            if self.header is None:
+                self.process_header()
 
-def process_content(packet: PacketData):
-    content_len = packet.header[HEADERS.CONTENT_LEN]
-    if len(packet.buffer) < content_len:
-        return
-    packet.content = packet.buffer[:content_len]
-    packet.buffer = packet.buffer[content_len:]
-
-
-def process_packet(packet: PacketData):
-    if packet.header_len is None:  # process proto-header
-        process_proto_header(packet)
-
-    if packet.header_len is not None:  # process packet header
-        if packet.header is None:
-            process_header(packet)
-
-    if packet.header is not None:  # process packet content
-        if packet.content is None:
-            process_content(packet)
+        if self.header is not None:  # process packet content
+            if self.content is None:
+                self.process_content()
 
 
 def encode(packet_data: Union[Dict, str]) -> bytes:

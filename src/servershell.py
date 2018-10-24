@@ -4,7 +4,7 @@ import os
 import socket
 
 import serverutils
-import servers
+import server
 
 # TODO implement server as cmdloop shell w/prompt (http-server)
 # TODO startup/shutdown/port/etc. methods
@@ -25,5 +25,5 @@ if __name__ == "__main__":
     else:
         host = serverutils.HOST
 
-    simpleserver = servers.SimpleServer()
+    simpleserver = server.SimpleServer()
     simpleserver.startup(host, args.port)  # TODO pass this to cmdloop class instead
