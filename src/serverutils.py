@@ -3,15 +3,13 @@ import sys
 import json
 import struct
 import hashlib
-from typing import Dict, Union  # TODO change to serverlib ? httplib ? - move headers from init?
+from typing import Dict, Union, Tuple, Any  # TODO change to serverlib ? httplib ? - move headers from init?
 
 from src import Status
 
 # References:
 #     - https://realpython.com/python-sockets
 #     - https://docs.python.org/3/library/socketserver.html
-
-HOST, PORT = '127.0.0.1', 8000  # defaults
 
 ENCODING = 'utf-8'
 BUFFER_SIZE = 4096
@@ -24,9 +22,9 @@ class RequestProcessor:  # TODO take in param to signal to process/thread that i
     __slots__ = ['buffer', 'content', 'header_len', 'header', 'md5sum',
                  'finished', 'client_address', 'connection', 'timeout']
 
-    def __init__(self, _client_address: Union[int, str], _client: socket, _timeout: int):  # TODO extract 'Packet' into data-class?
-        self.client_address = _client_address
-        self.connection = _client
+    def __init__(self, _client_connection: Tuple[socket, Any], _timeout: int):  # TODO extract 'Packet' into data-class?
+        self.client_address = _client_connection[1]
+        self.connection = _client_connection[0]
         self.timeout = _timeout
 
         self.buffer: bytearray = bytearray()

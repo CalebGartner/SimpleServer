@@ -4,31 +4,35 @@ import os
 import sys
 import socket
 import selectors
-from typing import Union
+from typing import Union, Tuple, Any
 
 import multiprocessing
 import multiprocessing.dummy as multithreading
 
 import src.serverutils as serverutils
 
+HOST, PORT = '127.0.0.1', 8000  # defaults
 SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
 CONTENT_DIR = os.path.dirname(os.path.abspath(__file__))
-SELECTOR = selectors.DefaultSelector  # vs SelectSelector ?
 
-# TODO find best tool for personal project wiki/docs
+# TODO logging ?
+# TODO find best tool for personal project wiki/docs - comments are good, but don't quite cut it
 # SimpleServer Control Flow:
-#     startup() -> setup() -> bind() -> serve() -> accept_client() -> serve_client() -> process_request()
-#         -> RequestProcessor
+#     startup() -> setup() -> bind() -> serve() . . .
+#         -> accept_client() -> serve_client() -> process_request() -> RequestProcessor
+#         . . .
 
 
 class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8000
 
-    max_clients = 10
-    max_time = 250  # per-request - what's reasonable?  # TODO persistent connections as well . . .
+    max_clients = 5
+
+    max_time = 250  # per-request
+    # add other vars for socket type, etc.
 
     def __init__(self,
-                 _address: Union[int, str] = serverutils.HOST,
-                 _port: int = serverutils.PORT,
+                 _address: Union[int, str] = HOST,
+                 _port: int = PORT,
                  _forking: bool = False):
         self._started: bool = False
 
@@ -36,26 +40,13 @@ class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8000
         self.port = _port
 
         # move to setup/bind ?
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # TCP socket connected to the client
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # TCP socket that accepts new clients
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # allows re-use by default
         self.name: str = None
         self.socket_fn: int = None
 
         self.forking = _forking
-        self.request_pool: mp.Pool = None
-
-    # Reference: https://docs.python.org/3/library/multiprocessing.html#multiprocessing
-    def startup(self):
-        self.setup()
-        # with selectors.DefaultSelector() as selector:  # needed? do something else . . . ?
-        #     selector.register(self.socket, selectors.EVENT_READ)
-
-        if self.forking:
-            with multiprocessing.Pool(processes=self.max_clients) as self.request_pool:
-                self.serve()
-        else:
-            with multithreading.Pool(processes=self.max_clients) as self.request_pool:
-                self.serve()
+        self.request_pool: multithreading.Pool = None
 
     def setup(self):  # post-init setup stuff - called by startup
         try:
@@ -66,42 +57,58 @@ class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8000
             raise
 
     def bind(self):  # called by setup
+        # self.socket.setblocking(False) ? use selector . . . not necessary because of address reuse?
         self.socket.bind((self.address, self.port))
-        # TODO self.socket.setblocking(False) ? use selector . . .
-        self.name = socket.getfqdn(self.address)
+        self.name = socket.getfqdn(self.address)  # fully qualified domain name
         self.socket_fn = self.socket.fileno()
 
-    def serve(self):  # called by startup, self.request_pool has been initialized
-        while self._started:  # and request_pool.processes < self.max_clients ?
-            try:
-                conn = self.accept_client()
-            except OSError:
-                pass
-            else:
-                self.serve_client(conn)
+    # Reference: https://docs.python.org/3/library/multiprocessing.html#multiprocessing
+    def startup(self):
+        self.setup()
+        if self.forking:  # use multi.Listener instead?
+            with multiprocessing.Pool(processes=self.max_clients) as self.request_pool:  # TODO refactor this somehow
+                self.serve()
+        else:
+            with multithreading.Pool(processes=self.max_clients) as self.request_pool:
+                self.serve()
+
+    def serve(self):
+        """
+Called by startup(). self.request_pool has already been initialized. Continues to serve in a loop until shutdown.
+        """
+        # select()-based selector allows for fewer wasted CPU cycles; event-driven
+        with selectors.SelectSelector() as selector:  # needed? do something else . . . ?
+            selector.register(self.socket, selectors.EVENT_READ)
+            while self._started:  # and request_pool.processes < self.max_clients ?
+                if selector.select():  # since timeout is none, it waits until the socket is ready
+                    try:
+                        conn = self.accept_client()
+                    except OSError:
+                        pass
+                    else:
+                        self.serve_client(conn)
 
     def accept_client(self):  # called by serve, accepts a new client
-        return self.socket.accept()
+        # Do I need to check if it's a previous connection? I shouldn't have to . . .
+        return self.socket.accept()  # TODO should I set sock options here for returned socket, set non-blocking, etc. ?
 
     def serve_client(self, client_connection):
-        # TODO callback/error_callback args
         result = self.request_pool.apply_async(self.process_request, args=client_connection)
-        # TODO check result . . .
+        result.wait(self.max_time)  # cuts off at max_time
 
-    # @staticmethod
     @classmethod
-    # TODO add timeout param + ensure the process/thread respects it (for both the socket/process-thread?)
-    def process_request(cls, *args):
+    def process_request(cls, client_connection: Tuple[socket, Any]):
         # Separate process/thread begins . . .
-        serverutils.RequestProcessor(*args, cls.max_time)
+        serverutils.RequestProcessor(client_connection, cls.max_time)
 
     def shutdown(self):
         self.socket.close()
-        self.request_pool = None
 
-    # def fileno(self):
-    #     """Return socket file number. Interface required by selector."""
-    #     return self.socket.fileno()
+        self.request_pool.join()  # TODO find out which to use . . . necessary? - using context manager . . .
+        self.request_pool.close()
+        self.request_pool.terminate()
+
+        self.request_pool = None
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.shutdown()  # cleanup
