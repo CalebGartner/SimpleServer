@@ -17,15 +17,15 @@ BYTEORDER = sys.byteorder
 PROTO_HEADER_LENGTH = 2  # bytes
 
 
-class RequestProcessor:  # TODO take in param to signal to process/thread that it's done . . . ?
+class RequestProcessor:
 
     __slots__ = ['buffer', 'content', 'header_len', 'header', 'md5sum',
                  'finished', 'client_address', 'connection', 'timeout']
 
     def __init__(self, _client_connection: Tuple[socket, Any], _timeout: int):  # TODO extract 'Packet' into data-class?
         self.client_address = _client_connection[1]
-        self.connection = _client_connection[0]
-        self.timeout = _timeout
+        self.connection: socket = _client_connection[0]
+        self.timeout = self.connection.gettimeout()
 
         self.buffer: bytearray = bytearray()
         self.content: bytearray = None
@@ -39,7 +39,7 @@ class RequestProcessor:  # TODO take in param to signal to process/thread that i
 
         self.service_request()
 
-    def service_request(self):
+    def service_request(self):  # TODO add service_client method + rename to ClientProcessing/or instead?
         with self.connection:
             print("Connected by: ", self.client_address)
             while not self.finished:

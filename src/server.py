@@ -4,10 +4,8 @@ import os
 import sys
 import socket
 import selectors
-from typing import Union, Tuple, Any
-
 import multiprocessing
-import multiprocessing.dummy as multithreading
+from typing import Union, Tuple, Any
 
 import src.serverutils as serverutils
 
@@ -28,16 +26,12 @@ class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8000
     max_clients = 5
 
     max_time = 250  # per-request
-    # add other vars for socket type, etc.
 
-    def __init__(self,
-                 _address: Union[int, str] = HOST,
-                 _port: int = PORT,
-                 _forking: bool = False):
+    def __init__(self, address: Union[int, str] = HOST, port: int = PORT):
         self._started: bool = False
 
-        self.address = _address
-        self.port = _port
+        self.address = address
+        self.port = port
 
         # move to setup/bind ?
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # TCP socket that accepts new clients
@@ -45,8 +39,7 @@ class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8000
         self.name: str = None
         self.socket_fn: int = None
 
-        self.forking = _forking
-        self.request_pool: multithreading.Pool = None
+        self.request_pool = None
 
     def setup(self):  # post-init setup stuff - called by startup
         try:
@@ -62,15 +55,11 @@ class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8000
         self.name = socket.getfqdn(self.address)  # fully qualified domain name
         self.socket_fn = self.socket.fileno()
 
-    # Reference: https://docs.python.org/3/library/multiprocessing.html#multiprocessing
     def startup(self):
         self.setup()
-        if self.forking:  # use multi.Listener instead?
-            with multiprocessing.Pool(processes=self.max_clients) as self.request_pool:  # TODO refactor this somehow
-                self.serve()
-        else:
-            with multithreading.Pool(processes=self.max_clients) as self.request_pool:
-                self.serve()
+        # use multi.Listener instead?
+        with multiprocessing.Pool(processes=self.max_clients) as self.request_pool:  # TODO refactor this somehow
+            self.serve()
 
     def serve(self):
         """
@@ -107,8 +96,6 @@ Called by startup(). self.request_pool has already been initialized. Continues t
         self.request_pool.join()  # TODO find out which to use . . . necessary? - using context manager . . .
         self.request_pool.close()
         self.request_pool.terminate()
-
-        self.request_pool = None
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.shutdown()  # cleanup
