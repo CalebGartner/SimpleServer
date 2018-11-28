@@ -17,15 +17,13 @@ CONTENT_DIR = os.path.dirname(os.path.abspath(__file__))
 # TODO find best tool for personal project wiki/docs - comments are good, but don't quite cut it
 # SimpleServer Control Flow:
 #     startup() -> setup() -> bind() -> serve() . . .
-#         -> accept_client() -> serve_client() -> process_request() -> RequestProcessor
+#         -> accept_client() -> serve_client() -> process_request() -> ClientProcessor
 #         . . .
 
 
 class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8000
 
     max_clients = 5
-
-    max_time = 250  # per-request
 
     def __init__(self, address: Union[int, str] = HOST, port: int = PORT):
         self._started: bool = False
@@ -85,10 +83,10 @@ Called by startup(). self.request_pool has already been initialized. Continues t
         result = self.request_pool.apply_async(self.process_request, args=client_connection)
         result.wait(self.max_time)  # cuts off at max_time
 
-    @classmethod
-    def process_request(cls, client_connection: Tuple[socket, Any]):
+    @staticmethod
+    def process_request(client_connection: Tuple[socket, Any]):
         # Separate process/thread begins . . .
-        serverutils.RequestProcessor(client_connection, cls.max_time)
+        serverutils.ClientProcessor(client_connection)
 
     def shutdown(self):
         self.socket.close()
