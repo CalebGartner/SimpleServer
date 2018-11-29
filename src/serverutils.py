@@ -31,7 +31,7 @@ BYTEORDER = sys.byteorder
 
 
 @dataclass
-class Request:
+class Request:  # TODO response dataclass?
 
     command: str
     request: str
@@ -106,7 +106,7 @@ Control Flow:
         try:
             if len(self.read_buffer) > 8192:
                 self.request = None
-                # self.send_error(Status.REQUEST_URI_TOO_LONG)
+                self.send_request_error(Status.REQUEST_URI_TOO_LONG)
                 return
             if len(self.read_buffer) == 0:  # needed?
                 self.finished = True
@@ -117,12 +117,12 @@ Control Flow:
             method_name = f"process_{self.request.command}_request"
             request_processing = getattr(self, method_name, None)
             if request_processing is None:
-                # self.send_error(Status.NOT_IMPLEMENTED, f"Unsupported method {self.request.command}")
+                self.send_request_error(Status.NOT_IMPLEMENTED, f"Unsupported method {self.request.command}")
                 return
             else:
                 request_processing()
 
-            self.write_buffer.clear()  # TODO actually send the response if not already done.
+            self.flush_write_buffer()  # just clear instead?
         except socket.timeout as e:
             # a read or a write timed out. Discard this connection
             self.finished = True
@@ -159,7 +159,7 @@ Control Flow:
                 raise ConnectionError
 
         if len(words) >= 3:  # Enough to determine protocol version
-            version = words[-1]  # wouldn't this include data/headers as well?
+            version = words[-1]  # last word of status line
             try:
                 # RFC 2145 section 3.1 - parsing HTTP requests (Status Line)
                 if not version.startswith('HTTP/'):
@@ -199,7 +199,7 @@ Control Flow:
 
         # Examine the headers and look for a Connection directive.
         try:
-            self.request.headers = http.client.parse_headers(io.BytesIO(self.read_buffer))
+            self.request.headers = http.client.parse_headers(io.BytesIO(self.read_buffer))  # parses using std lib
         except http.client.LineTooLong as err:
             self.send_request_error(
                 Status.REQUEST_HEADER_FIELDS_TOO_LARGE,
@@ -223,11 +223,11 @@ Control Flow:
         # Examine the headers and look for an Expect directive
         expect = self.request.headers.get('Expect', "")
         if expect.lower() == "100-continue" and self.request.version >= "HTTP/1.1":
-            self.send_response_only(Status.CONTINUE)
+            self.send_status(Status.CONTINUE)
             self.write_buffer.append(b"\r\n")  # mark end of headers
             self.flush_write_buffer()
 
-    def send_request_error(self, code, header=None, descriptor=None):  # TODO no descriptor necessary?
+    def send_request_error(self, code, header=None, descriptor=None):
 
         if code not in Status:
             _header, _descriptor = '???', '???'
@@ -238,8 +238,20 @@ Control Flow:
             header = _header
         if descriptor is None:
             descriptor = _descriptor
-        self.send_response(code, header)
-        self.send_header('Connection', 'close')
+
+        response = f"{self.default_http_version} {code} {header}\r\n".encode(ENCODING)
+        self.write_buffer.append(response)
+
+        version = "Python/" + sys.version.split()[0]
+        version_header = f'Server: HTTP/1.1 {version}'.encode(ENCODING)
+
+        date_time = email.utils.formatdate(time.time(), usegmt=True)
+        date_time_header = f'Date: {date_time}'.encode(ENCODING)
+
+        close_header = 'Connection: close'.encode(ENCODING)
+        self.finished = True
+
+        self.write_buffer.extend([version_header, date_time_header, close_header])
 
         # RFC2616: 4.3
         # All 1xx (informational), 204 (no content), and 304 (not modified) responses
@@ -259,8 +271,9 @@ Control Flow:
             content_type = 'Content-Type: application/json'
             content_length = 'Content-Length: {}'.format(len(content))
 
-            self.write_buffer.extend([content_type.encode(ENCODING),
-                                      content_length.encode(ENCODING)])
+            self.write_buffer.extend(
+                [content_type.encode(ENCODING),
+                 content_length.encode(ENCODING)])
         self.write_buffer.append(b"\r\n")  # mark end of headers
         self.flush_write_buffer()  # send all headers to client
 
@@ -268,57 +281,28 @@ Control Flow:
             self.write_buffer.append(content)
             self.flush_write_buffer()
 
-    def send_response(self, code, message=None):
-        """Add the response header to the headers buffer and log the
-        response code.
-
-        Also send two standard headers with the server software
-        version and the current date.
-
-        """
-        self.log_request(code)
-        self.send_response_only(code, message)
-        self.send_header('Server', self.version_string())
-        self.send_header('Date', self.date_time_string())
-
-    def send_response_only(self, code, message=None):
-        """Send the response header only."""
-        if self.request_version != 'HTTP/0.9':
-            if message is None:
-                if code in self.responses:
-                    message = self.responses[code][0]
+    def send_status(self, code, header=None):
+            if header is None:
+                if code in Status:
+                    header = Status[code][0]
                 else:
-                    message = ''
-            if not hasattr(self, '_headers_buffer'):
-                self._headers_buffer = []
-            self._headers_buffer.append(("%s %d %s\r\n" %
-                    (self.protocol_version, code, message)).encode(
-                        'latin-1', 'strict'))
-
-    def send_header(self, keyword, value):
-        """Send a MIME header to the headers buffer."""
-        if self.request_version != 'HTTP/0.9':
-            if not hasattr(self, '_headers_buffer'):
-                self._headers_buffer = []
-            self._headers_buffer.append(
-                ("%s: %s\r\n" % (keyword, value)).encode('latin-1', 'strict'))
-
-        if keyword.lower() == 'connection':
-            if value.lower() == 'close':
-                self.close_connection = True
-            elif value.lower() == 'keep-alive':
-                self.close_connection = False
-
-    def end_headers(self):  # remove - not necessary?
-        """Send the blank line ending the MIME headers."""
-        if self.request_version != 'HTTP/0.9':
-            self._headers_buffer.append(b"\r\n")
-            self.flush_headers()
+                    header = ''
+            status = f"{self.default_http_version} {code} {header}\r\n".encode(ENCODING)
+            self.write_buffer.append(status)
 
     def flush_write_buffer(self):
         if self.write_buffer:
-            self.connection.send(b"\r\n".join(self.write_buffer))
+            self.connection.send(b"\r\n".join(self.write_buffer), )
             self.write_buffer.clear()
+
+    def process_GET_request(self):
+        pass
+
+    def process_HEAD_request(self):
+        pass
+
+    def process_POST_request(self):
+        pass
 
 
 def encode(packet_data: Union[Dict, str]) -> bytes:
@@ -327,23 +311,6 @@ def encode(packet_data: Union[Dict, str]) -> bytes:
 
 def decode(packet_data: Union[bytes, bytearray]) -> Dict:
     return json.loads(packet_data.decode(encoding=ENCODING))
-
-
-def create_packet(packet_content: Union[bytes, bytearray, str], action: str, additional_headers: Dict = None):
-    if not isinstance(packet_content, (bytes, bytearray)):
-        packet_content = encode(packet_content)
-
-    header = {HEADERS.BYTEORDER: sys.byteorder,  # remove/specify '>' ? - parse/convert to client sys.byteorder ?
-              HEADERS.ACTION: action,
-              HEADERS.CONTENT_LEN: len(packet_content)}
-
-    if additional_headers is not None:
-        header.update(additional_headers)
-
-    packet_header = encode(header)
-    proto_header = struct.pack(">H", len(packet_header))
-    message = proto_header + packet_header + packet_content
-    return message
 
 
 def packet_md5sum(data: Union[bytes, bytearray]):
