@@ -58,8 +58,8 @@ class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8434
         self.setup()
         self._started = True
         # use multi.Listener instead?
-        # with multiprocessing.Pool(processes=self.max_clients) as self.request_pool:  # TODO refactor this somehow
-        self.serve()
+        with multiprocessing.Pool(processes=self.max_clients) as self.request_pool:  # TODO refactor this somehow
+            self.serve()
 
     def serve(self):
         """
@@ -75,8 +75,7 @@ Called by startup(). self.request_pool has already been initialized. Continues t
                     except OSError:
                         self._started = False
                     else:
-                        serverutils.ClientProcessor(conn)
-                        # self.serve_client(conn)
+                        self.serve_client(conn)
 
     def accept_client(self):  # called by serve, accepts a new client
         # Do I need to check if it's a previous connection? I shouldn't have to . . .

@@ -10,9 +10,8 @@ import urllib.parse
 import socket
 import sys
 import json
-import hashlib
 from dataclasses import dataclass
-from typing import Dict, Union, Tuple, Any  # TODO change to serverlib ? httplib ?
+from typing import Dict, Union  # TODO change to serverlib ? httplib ?
 
 from src import Status
 
@@ -64,7 +63,7 @@ Control Flow:
     #              'finished', 'client_address', 'connection', 'timeout']
 
     def __init__(self, client_connection):
-        self.client_address = client_connection[1]
+        self.client_address = client_connection[1]  # tuple
         self.connection = client_connection[0]
         self.timeout = self.connection.gettimeout()  # need to set timeout?
 
@@ -197,7 +196,7 @@ Control Flow:
         command, path = words[:2]
         self.request.command, self.request.path = command, path
 
-        # Examine the headers and look for a Connection directive.
+        # look for a 'Connection' header
         try:
             self.request.headers = http.client.parse_headers(io.BytesIO(self.read_buffer))  # parses using std lib
         except http.client.LineTooLong as err:
@@ -220,7 +219,6 @@ Control Flow:
         elif self.request.type.lower() == 'keep-alive' and self.request.version >= "HTTP/1.1":
             self.finished = False
 
-        # Examine the headers and look for an Expect directive
         expect = self.request.headers.get('Expect', "")
         if expect.lower() == "100-continue" and self.request.version >= "HTTP/1.1":
             self.send_status(Status.CONTINUE)
@@ -240,7 +238,7 @@ Control Flow:
             descriptor = _descriptor
 
         response = f"{self.default_http_version} {code} {header}\r\n".encode(ENCODING)
-        self.write_buffer.append(response)
+        self.write_buffer.extend(response)
 
         version = "Python/" + sys.version.split()[0]
         version_header = f'Server: HTTP/1.1 {version}'.encode(ENCODING)
