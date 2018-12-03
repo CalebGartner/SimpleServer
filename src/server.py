@@ -98,3 +98,24 @@ Called by startup(). self.request_pool has already been initialized. Continues t
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.shutdown()  # cleanup
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Start the HTTP server on a specific port.')
+    parser.add_argument('--port', '-p', '--server-port', default=PORT,
+                        type=int, nargs='?',
+                        help='The port number of the listening server socket. Defaults to 8000.')
+    parser.add_argument('--address', '-a', default=HOST,
+                        metavar='ADDRESS',
+                        help=f'Specify alternate bind address. [DEFAULT]: {HOST}')
+    parser.add_argument('--directory', '-d', default=CONTENT_DIR,
+                        help=f'Specify server content directory. [DEFAULT]: {CONTENT_DIR}')
+
+    args = parser.parse_args()
+
+    simpleserver = SimpleServer(args.address, args.port)
+    sa = simpleserver.socket.getsockname()
+    serve_message = "Serving HTTP on {host} port {port} (http://{host}:{port}/) ..."
+    print(serve_message.format(host=sa[0], port=sa[1]))
