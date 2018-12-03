@@ -9,7 +9,7 @@ from typing import Union, Tuple, Any
 
 import src.serverutils as serverutils
 
-HOST, PORT = '127.0.0.1', 8000  # defaults
+HOST, PORT = '127.0.0.1', 8434  # defaults - random port for testing
 SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
 CONTENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -21,7 +21,7 @@ CONTENT_DIR = os.path.dirname(os.path.abspath(__file__))
 #         . . .
 
 
-class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8000
+class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8434
 
     max_clients = 5
     max_time = 275
