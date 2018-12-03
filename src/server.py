@@ -24,6 +24,7 @@ CONTENT_DIR = os.path.dirname(os.path.abspath(__file__))
 class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8000
 
     max_clients = 5
+    max_time = 275
 
     def __init__(self, address: Union[int, str] = HOST, port: int = PORT):
         self._started: bool = False

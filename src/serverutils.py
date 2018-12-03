@@ -1,30 +1,29 @@
 import datetime
 import email.utils
-import html
 import http.client
 import io
 import mimetypes
 import os
 import posixpath
-import shutil
-import socketserver
 import time
 import urllib.parse
-from dataclasses import dataclass
-from functools import partial
-
 import socket
 import sys
 import json
-import struct
 import hashlib
+from dataclasses import dataclass
 from typing import Dict, Union, Tuple, Any  # TODO change to serverlib ? httplib ?
 
 from src import Status
 
 # References:
 #     - https://realpython.com/python-sockets
+#     - https://www.cs.cmu.edu/%7Eprs/15-441-F16/project1/project1.pdf
+#     - https://www.cs.cmu.edu/~prs/15-441-F16/project1/rfc
+#     - https://www.cs.cmu.edu/~prs/15-441-F16/project1/FAQ
 #     - https://docs.python.org/3/library/socketserver.html
+#     - https://github.com/python/cpython/blob/3.7/Lib/http/server.py
+#     - https://github.com/python/cpython/blob/3.7/Lib/socketserver.py
 
 ENCODING = 'iso-8859-1'  # standard for compatibility
 BYTEORDER = sys.byteorder
@@ -35,6 +34,7 @@ class Request:  # TODO response dataclass?
 
     command: str
     request: str
+    path: str
     version: str
     status_line: str
     headers: Dict
@@ -292,17 +292,144 @@ Control Flow:
 
     def flush_write_buffer(self):
         if self.write_buffer:
-            self.connection.send(b"\r\n".join(self.write_buffer), )
+            self.connection.send(b"\r\n".join(self.write_buffer))
             self.write_buffer.clear()
 
     def process_GET_request(self):
-        pass
+        f = self.send_response_and_headers()  # returns file-like object (optional)
+        if f:
+            try:
+                eof = False
+                offset = 0
+
+                while not eof:
+                    f.seek(offset)
+                    file_data = f.read(self.buffer_size)
+                    offset = f.tell()
+
+                    if not file_data:  # No data left, server has met EOF
+                        eof = True
+                    else:
+                        self.write_buffer.append(file_data)
+                        self.flush_write_buffer()
+            finally:
+                f.close()
 
     def process_HEAD_request(self):
-        pass
+        f = self.send_response_and_headers()
+        if f:
+            f.close()
 
-    def process_POST_request(self):
-        pass
+    def send_response_and_headers(self):  # partially from std lib
+
+        path = self.sanitize_path(self.request.path)
+        f = None
+        if os.path.isdir(path):
+            parts = urllib.parse.urlsplit(self.request.path)
+            if not parts.path.endswith('/'):
+                # redirect browser - doing basically what apache does
+                self.send_status(Status.MOVED_PERMANENTLY)
+                new_parts = (parts[0], parts[1], parts[2] + '/',
+                             parts[3], parts[4])
+                new_url = urllib.parse.urlunsplit(new_parts)
+                location_header = f'Location: {new_url}'.encode(ENCODING)
+                self.write_buffer.append(location_header)
+                self.flush_write_buffer()
+                return
+
+        ctype = self.guess_type(path)
+        try:
+            f = open(path, 'rb')
+        except OSError:
+            self.send_request_error(Status.NOT_FOUND, "File not found")
+            return None
+
+        try:
+            fs = os.fstat(f.fileno())
+            # Use browser cache if possible
+            if ("If-Modified-Since" in self.request.headers
+                    and "If-None-Match" not in self.request.headers):
+                # compare If-Modified-Since and time of last file modification
+                try:
+                    ims = email.utils.parsedate_to_datetime(
+                        self.request.headers["If-Modified-Since"])
+                except (TypeError, IndexError, OverflowError, ValueError):
+                    # ignore ill-formed values
+                    pass
+                else:
+                    if ims.tzinfo is None:
+                        # obsolete format with no timezone, cf.
+                        # https://tools.ietf.org/html/rfc7231#section-7.1.1.1
+                        ims = ims.replace(tzinfo=datetime.timezone.utc)
+                    if ims.tzinfo is datetime.timezone.utc:
+                        # compare to UTC datetime of last modification
+                        last_modif = datetime.datetime.fromtimestamp(
+                            fs.st_mtime, datetime.timezone.utc)
+                        # remove microseconds, like in If-Modified-Since
+                        last_modif = last_modif.replace(microsecond=0)
+
+                        if last_modif <= ims:
+                            self.send_status(Status.NOT_MODIFIED)
+                            self.write_buffer.append(b"\r\n")  # mark end of headers
+                            self.flush_write_buffer()
+                            f.close()
+                            return None
+
+            self.send_status(Status.OK)
+
+            type_header = f"Content-type: {ctype}".encode(ENCODING)
+            self.write_buffer.append(type_header)
+
+            length_header = f"Content-Length: {str(fs[6])}".encode(ENCODING)
+            self.write_buffer.append(length_header)
+
+            f_time = email.utils.formatdate(fs.st_mtime, usegmt=True)
+            f_time_header = f"Last-Modified: {f_time}".encode(ENCODING)
+            self.write_buffer.append(f_time_header)
+
+            self.write_buffer.append(b"\r\n")  # mark end of headers
+            self.flush_write_buffer()
+            return f
+        except:
+            f.close()
+            raise
+
+    def sanitize_path(self, path: str):  # refactor . . . partially from std lib
+        path = path.split('?',1)[0]
+        path = path.split('#',1)[0]
+        trailing_slash = path.rstrip().endswith('/')
+
+        try:
+            path = urllib.parse.unquote(path, errors='surrogatepass')
+        except UnicodeDecodeError:
+            path = urllib.parse.unquote(path)
+        path = posixpath.normpath(path)
+        words = path.split('/')
+        words = filter(None, words)
+        path = os.getcwd()
+        for word in words:
+            if os.path.dirname(word) or word in (os.curdir, os.pardir):
+                # Ignore components that are not a simple file/directory name
+                continue
+            path = os.path.join(path, word)
+        if trailing_slash:
+            path += '/'
+        return path
+
+    def guess_type(self, path: str):  # taken from std lib
+
+        base, ext = os.path.splitext(path)
+        if ext in self.extensions_map:
+            return self.extensions_map[ext]
+        ext = ext.lower()
+        if ext in self.extensions_map:
+            return self.extensions_map[ext]
+        else:
+            return self.extensions_map['']
+
+    if not mimetypes.inited:
+        mimetypes.init() # try to read system mime.types
+    extensions_map = mimetypes.types_map.copy()
 
 
 def encode(packet_data: Union[Dict, str]) -> bytes:
@@ -311,7 +438,3 @@ def encode(packet_data: Union[Dict, str]) -> bytes:
 
 def decode(packet_data: Union[bytes, bytearray]) -> Dict:
     return json.loads(packet_data.decode(encoding=ENCODING))
-
-
-def packet_md5sum(data: Union[bytes, bytearray]):
-    return hashlib.md5(data).hexdigest()
