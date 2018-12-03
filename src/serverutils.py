@@ -32,13 +32,13 @@ BYTEORDER = sys.byteorder
 @dataclass
 class Request:  # TODO response dataclass?
 
-    command: str
-    request: str
-    path: str
-    version: str
-    status_line: str
-    headers: Dict
-    type: str  # close/keep-alive/etc.
+    command: str = None
+    request: str = None
+    path: str = None
+    version: str = None
+    status_line: str = None
+    headers: Dict = None
+    type: str = None  # close/keep-alive/etc.
 
 
 class ClientProcessor:
@@ -63,14 +63,14 @@ Control Flow:
     # __slots__ = ['buffer', 'content', 'header_len', 'header', 'md5sum',
     #              'finished', 'client_address', 'connection', 'timeout']
 
-    def __init__(self, client_connection: Tuple[socket, Any]):
+    def __init__(self, client_connection):
         self.client_address = client_connection[1]
         self.connection = client_connection[0]
         self.timeout = self.connection.gettimeout()  # need to set timeout?
 
         self.write_buffer = bytearray()
         self.read_buffer = bytearray()
-        self.request = None
+        self.request = Request()
 
         # self.header_len: int = None
         # self.header: Dict = None

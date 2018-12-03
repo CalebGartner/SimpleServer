@@ -7,7 +7,7 @@ import selectors
 import multiprocessing
 from typing import Union, Tuple, Any
 
-import src.serverutils as serverutils
+import serverutils
 
 HOST, PORT = '127.0.0.1', 8434  # defaults - random port for testing
 SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -56,9 +56,10 @@ class SimpleServer:  # HTTP/1.1 - Default: address='localhost', port=8434
 
     def startup(self):
         self.setup()
+        self._started = True
         # use multi.Listener instead?
-        with multiprocessing.Pool(processes=self.max_clients) as self.request_pool:  # TODO refactor this somehow
-            self.serve()
+        # with multiprocessing.Pool(processes=self.max_clients) as self.request_pool:  # TODO refactor this somehow
+        self.serve()
 
     def serve(self):
         """
@@ -72,9 +73,10 @@ Called by startup(). self.request_pool has already been initialized. Continues t
                     try:
                         conn = self.accept_client()
                     except OSError:
-                        pass
+                        self._started = False
                     else:
-                        self.serve_client(conn)
+                        serverutils.ClientProcessor(conn)
+                        # self.serve_client(conn)
 
     def accept_client(self):  # called by serve, accepts a new client
         # Do I need to check if it's a previous connection? I shouldn't have to . . .
@@ -85,7 +87,7 @@ Called by startup(). self.request_pool has already been initialized. Continues t
         result.wait(self.max_time)  # cuts off at max_time
 
     @staticmethod
-    def process_request(client_connection: Tuple[socket, Any]):
+    def process_request(client_connection):
         # Separate process/thread begins . . .
         serverutils.ClientProcessor(client_connection)
 
@@ -117,5 +119,6 @@ if __name__ == '__main__':
 
     simpleserver = SimpleServer(args.address, args.port)
     sa = simpleserver.socket.getsockname()
+    simpleserver.startup()
     serve_message = "Serving HTTP on {host} port {port} (http://{host}:{port}/) ..."
     print(serve_message.format(host=sa[0], port=sa[1]))
